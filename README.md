@@ -1,7 +1,8 @@
 # Audiovisual-Analytics
-Interactive javascript-based visualization and sonification of NYPD Motor Vehicle Collisions
+Interactive javascript-based multi-modal visualization and sonification of NYPD Motor Vehicle Collisions
 
 This prototype presents the publically available NYPD Motor Vehicle Collision data (https://data.cityofnewyork.us/Public-Safety/NYPD-Motor-Vehicle-Collisions/h9gi-nx95) using visuals and sound. It was build for participation in the BTW Data Science Challenge (http://btw2017.informatik.uni-stuttgart.de/?pageId=CallForDSChallenge&language=en).
+The visualization bases on leaflet and d3, the sonification bases on the Web Audio API.
 
 Authors: Tobias Hildebrandt, Conrad Indiono
 
