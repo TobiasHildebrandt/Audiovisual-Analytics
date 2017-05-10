@@ -7,6 +7,7 @@ The visualization bases on leaflet and d3, the sonification bases on the Web Aud
 Authors: Tobias Hildebrandt, Conrad Indiono
 
 Demo: http://btw.lab.indygemma.com/tobias/vis
+Videos: https://vimeo.com/user25403611
 
 The audiovisual user interface requires a database loaded with the data set as well as a server running the the data handling service by Conrad Indiono (link will follow). Alternatively, the code regarding the data access can be modified to query the public API of the data set (see https://dev.socrata.com/foundry/data.cityofnewyork.us/qiz3-axqb) - see comments in the code.
 
