@@ -1,0 +1,893 @@
+<meta charset="utf-8">
+<html>
+    <head>
+        <title>Audiovisual Analytics</title>
+        <p>
+
+        <link rel="stylesheet" href="/leaflet/leaflet.css"/>
+        <script src="/d3/d3.v3.js"></script>
+        <script src="/d3/legend.js"></script>
+        <script src="/leaflet/leaflet.js"></script>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.1.1/jquery.min.js"></script>
+
+        <style>
+        html,body{height:100%;}
+        .overlay{
+                position:fixed;
+                top:50px;
+                left: 40px;
+                background-color: transparent;
+                padding: 20px;
+                border-radius: 2px;
+            }
+
+            .overlay label{
+                color: black;
+                margin:2px 0px;
+                display: inline-block;
+                font-family: 'Open Sans', sans-serif;
+                font-size: 12px;
+            }
+
+            .crashInfo {
+                background-color: white;
+                opacity: 0.5;
+                font-size: 18px;
+            }
+            .timeSlider{
+              background-color: white;
+              opacity: 0.9;
+              font-size: 18px;
+              position:fixed;
+              top:20px;
+              left: 40px;
+            }
+        </style>
+
+
+        </head>
+        <body>
+        <div id="map" style="height:100%; width:100%"></div>
+        <script type="text/javascript">
+
+            var map = L.map('map').setView([40.730610, -73.935242], 13);
+            mapLink = '<a href="http://openstreetmap.org">OpenStreetMap</a>';
+            var tile=L.tileLayer('http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {attribution: '&copy; ' + mapLink + ' Contributors', maxZoom: 18, opacity: 0.5,}).addTo(map);
+
+            L.svg().addTo(map);
+
+            var svg = d3.select("#map").select("svg");
+            g = svg.append("g");
+            var control;
+            var feature;
+            var filtered;
+
+            var numberSon;
+            var injuredSon;
+            var injuredSize=d3.scale.linear().domain([0,50 ]).range([10,200 ]);
+            var injuredOpacity=d3.scale.linear().domain([0,50 ]).range([0.3,1 ]);
+            var factorColor=d3.scale.category20();
+            var injuredStrokeWidth=d3.scale.linear().domain([0,50]).range([0,50]);
+            var injuredStreet;
+            var all_data = [];
+            var n;
+            var factors=[];
+            var motor=0;
+            var bike=0;
+            var ped=0;
+            var crashInfo;
+            var timeSlider=0;
+            var synth=0;
+            var motoristInjured=0;
+            var motoristKilled=0;
+            var bikeInjured=0;
+            var bikeKilled=0;
+            var pedInjured=0;
+            var pedKilled=0;
+            var personsInjured=0;
+            var personsKilled=0;
+            var soundURL="car.wav";
+            // create web audio api context
+            var audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            loadSound();
+            // create Oscillator node
+            var oscillator = audioCtx.createOscillator();
+            var gainNode=audioCtx.createGain();
+            var gainNode2=audioCtx.createGain();
+            var domain;
+            var range;
+            var firstTime=1;
+            var day=1;
+            var baseDate=new Date('2012-07-01 02:00:00');
+            var startDate=baseDate;
+            var endDate=new Date(startDate);
+            var from;
+            var to;
+            var leftLabel;
+            var rightLabel;
+            var i=0;
+            var curCrash;
+            var speed=1000;
+            var timeLabel;
+            var carSound;
+            var animation=0;
+            var Data;
+            var streetVector=[];
+            var geoSons=[];
+            var streetList=new Map();
+            var streets=0;
+            var clusters=0;
+            endDate.setDate(endDate.getDate()+day);
+
+            console.log(startDate.toISOString().slice(0, 19).replace('T', ' '));
+            console.log(endDate.toISOString().slice(0, 19).replace('T', ' '));
+
+            oscillator.type = 'sine';
+            oscillator.connect(gainNode);
+            oscillator.connect(audioCtx.destination);
+            oscillator.start();
+            gainNode.gain.value=1;
+
+            var statement = "\
+                  SELECT id,\
+                         datetime,\
+                         borough,\
+                         zipcode,\
+                         ST_AsGeoJSON(position) as position,\
+                         on_street_name,\
+                         cross_street_name,\
+                         off_street_name,\
+                         number_persons_injured,\
+                         number_persons_killed,\
+                         number_pedestrians_injured,\
+                         number_pedestrians_killed,\
+                         number_cyclist_injured,\
+                         number_cyclist_killed,\
+                         number_motorist_injured,\
+                         number_motorist_killed,\
+                         contributing_factor_vehicle_1,\
+                         contributing_factor_vehicle_2,\
+                         contributing_factor_vehicle_3,\
+                         contributing_factor_vehicle_4,\
+                         contributing_factor_vehicle_5,\
+                         vehicle_type_code_1,\
+                         vehicle_type_code_2,\
+                         vehicle_type_code_3,\
+                         vehicle_type_code_4,\
+                         vehicle_type_code_5\
+                      FROM accidents WHERE datetime >= '" + startDate.toISOString().slice(0, 19).replace('T', ' ')+"'::timestamptz\
+                                       AND datetime <  '" + endDate.toISOString().slice(0, 19).replace('T', ' ')+"'::timestamptz\
+                                       AND position is NOT NULL\
+                     ORDER BY datetime\
+                   "
+
+			//TODO: adapt URL for data service or API access
+                   function fetch_data(statement, f) {
+                       $.post("/data/api/accidents", statement, f, "json").fail(function(error) {
+                           console.log("ERROR IN SQL STATEMENT");
+                           console.log(error.responseText);
+                       });
+                   }
+
+
+                   function getStreet(streetName, opa, personsKilled){
+                     //replace with streetname
+                     var street = "\
+                         SELECT gid,\
+                                ST_AsGeoJSON(the_geom) as geom\
+                             FROM speedlimits WHERE street='"+streetName+"'\
+                          "
+			//TODO: adapt URL for data service or API access
+                    $.post("/data/api/accidents", street, function(data){
+                      var num=data.count;
+                      streetVector=[];
+                      for(var i=0; i<num; i++)
+                      {
+                          streetVector.push(JSON.parse(data.result[i].geom));
+                      }
+                      drawStreets(opa, personsKilled);}
+
+                      , "json").fail(function(error) {
+                        console.log("ERROR IN SQL STATEMENT");
+                        console.log(error.responseText);
+                    });
+                   }
+
+                   function drawStreets(opa,personsKilled){
+                     var len=streetVector.length;
+                     var myStyle = {
+                          "color": "#ff7800",
+                          "weight": 5,
+                          "opacity": opa
+                      };
+                     for(var i=0; i<len; i++){
+                        geoSons.push(L.geoJSON(streetVector[i], {style: myStyle}).addTo(map));
+                     }
+                     if(personsKilled!='undefined'&&personsKilled>0){
+                       console.log("killed");
+                     }
+
+                   }
+
+                   function loadSound(url) {
+                        var request = new XMLHttpRequest();
+                        request.open('GET', soundURL, true);
+                        request.responseType = 'arraybuffer';
+
+                        // Decode asynchronously
+                        request.onload = function() {
+                          console.log("loaded");
+                          audioCtx.decodeAudioData(request.response, function(buffer) {
+                            console.log("decoded");
+                            carSound = buffer;
+                          });
+                        }
+                        request.send();
+                  }
+
+                  function playSound(buffer, volume) {
+                      console.log(volume);
+                      var source = audioCtx.createBufferSource(); // creates a sound source
+                      source.buffer = buffer;                    // tell the source which sound to play
+                      source.connect(audioCtx.destination);
+                      source.connect(gainNode2);
+                      source.playbackRate.value=volume*3;
+                      gainNode2.gain.value=volume;
+                           // connect the source to the context's destination (the speakers)
+                      source.start(0);                           // play the source now
+                                                               // note: on older systems, may have to use deprecated noteOn(time);
+                  }
+
+                   function main_data_handler(data) {
+                    // drawRacks();
+                    if(clusters==1){
+                      drawClusters();
+                    }
+
+                    // console.log(data.result);
+                    for(var i=0; i<geoSons.length; i++){
+                       map.removeLayer(geoSons[i]);
+                     }
+                     geoSons=[];
+                     streetList=new Map();
+
+                    Data=data;
+                    i=0;
+                     n=data.count;
+                     all_data = data.result;
+                
+                     if(animation==1){
+                       injuredPitch=d3.scale.linear().domain([0,50 ]).range([100,5000 ]);
+                       numberVol=d3.scale.linear().domain([0,10 ]).range([0.3,1 ]);
+                     }
+                    else{
+                      injuredStreet=d3.scale.linear().domain([1,n/50]).range([0.1,1]);
+                      injuredPitch=d3.scale.linear().domain([0,2500 ]).range([100,300 ]);
+                      numberVol=d3.scale.linear().domain([0,n ]).range([0.3,1 ]);
+                      g.selectAll("circle").remove();
+                          update("repaint");
+
+                    }
+
+                     map.on("viewreset", update);
+                     map.on("moveend", update);
+                     domain=factorColor.domain();
+                     range=factorColor.range();
+                     factorFilter=domain;
+                     if(firstTime==1){
+                          stuff();
+                      }
+
+                      firstTime=0;
+
+                       loop();
+                   }
+
+
+                   function loop(){
+
+                     if(animation==1){
+                     //In Miliseconds
+                     var wait=0;
+                     if(i>0){
+                       var a=new Date(all_data[i-1].datetime);
+                       var b=new Date(all_data[i].datetime);
+                       wait=b-a;
+                       if (wait==0){
+                         wait=100000;
+                       }
+
+                     }
+                     timeLabel.innerHTML="<br>"+b+"</br>";
+
+
+                     setTimeout(function (){
+                     if(animation==1){
+                          curCrash=[all_data[i]];
+                          g.selectAll("circle").remove();
+
+                          motoristInjured=0;
+                          motoristKilled=0;
+                          bikeInjured=0;
+                          bikeKilled=0;
+                          pedInjured=0;
+                          pedKilled=0;
+                          personsInjured=0;
+                          personsKilled=0;
+                          var streetName;
+
+                          filtered = g.selectAll("circle")
+                              .data(curCrash)
+                              .enter().append("circle")
+                              .style("stroke", "black")
+                              .style("stroke-width", 20)
+                              .style("opacity", 0)
+                              .style("fill", "red")
+                              .attr("r", 20);
+
+
+                           filtered.attr("transform",
+                               function(d) {
+                                     if(d.on_street_name!=""){
+                                       streetName=d.on_street_name;
+                                     }
+                                      var pos=new L.LatLng(d.position.coordinates[0],d.position.coordinates[1]);
+                                     return "translate("+ map.latLngToLayerPoint(pos).x +","+map.latLngToLayerPoint(pos).y +")";
+
+                            });
+                             filtered.style("opacity",
+                               function(d) {
+                                 personsKilled+=d.number_persons_killed;
+                                 personsInjured+=d.number_persons_injured;
+                                 return injuredOpacity((d.number_persons_killed*2)+d.number_persons_injured);
+                             });
+                             filtered.attr("r",
+                               function(d){
+                                 return injuredSize((d.number_persons_killed*2)+d.number_persons_injured);
+                             });
+                             filtered.style("fill",
+                                function(d){
+
+                                  return factorColor(d.contributing_factor_vehicle_1);
+                             });
+                             filtered.style("stroke",
+                               function(d){
+                                 if(d.number_cyclist_killed>0||d.number_cyclist_injured>0){
+                                     bikeKilled+=d.number_cyclist_killed;
+                                     bikeInjured+=d.number_cyclist_injured;
+                                     return "red";
+                                 }
+                                 if(d.number_pedestrians_killed>0||d.number_pedestrians_injured>0){
+                                     pedKilled+=d.number_pedestrians_killed;
+                                     pedInjured+=d.number_pedestrians_injured;
+                                     return "blue";
+                                 }
+                                 if(d.number_motorist_killed>0||d.number_motorist_injured>0){
+                                     motoristKilled+=d.number_motorist_killed;
+                                     motoristInjured+=d.number_motorist_injured;
+                                     return "green";
+                                 }
+
+                             });
+                             filtered.style("stroke-width",
+                               function(d){
+                                 return injuredStrokeWidth((d.number_persons_killed*2)+d.number_persons_injured);
+                               });
+                                oscillator.frequency.value = injuredPitch((personsKilled*2)+personsInjured); // value in hertz
+                               console.log(numberVol((personsKilled*2)+personsInjured));
+                               gainNode.gain.value=numberVol((personsKilled*2)+personsInjured);
+                               playSound(carSound, numberVol((personsKilled*2)+personsInjured));
+                           if(streets==1){
+                              if(streetName!='undefined'&&(personsKilled>0||personsInjured>0)){
+                                  getStreet(streetName, injuredOpacity((personsKilled*2)+personsInjured), personsKilled);
+                              }
+                            }
+
+
+
+
+                         i++;
+                         if (i<n&&animation==1) {
+                           loop();
+                         }
+                     }
+
+                   }, wait/speed);
+
+                 }
+                 else{
+
+                 }
+
+
+                }
+
+
+                   function stuff(){
+                     TimeSlider=L.Control.extend({
+                       options: {
+                         position: 'topleft'
+                       },
+                       onAdd: function (map) {
+                         this._div= L.DomUtil.create('div', 'timeSlider');
+                         this.left=L.DomUtil.create('label','from',this._div);
+
+                         this.left.innerHTML=all_data[0].datetime;
+                         this.inputRange=L.DomUtil.create('input', 'timeinput', this._div);
+                         this.inputRange.type='range';
+                         this.inputRange.style.display="inline-block";
+                         this.inputRange.style.width="400px";
+                         this.inputRange.min=0;
+                         //numnber of days
+                         this.inputRange.max=1673;
+                         this.inputRange.value=0;
+
+
+                         this.rightRange=L.DomUtil.create('input', 'timeinput', this._div);
+                         this.rightRange.type='range';
+                         this.rightRange.style.display="inline-block";
+                         this.rightRange.style.width="400px";
+                         this.rightRange.min=1;
+                         //numnber of days
+                         this.rightRange.max=1673;
+                         this.rightRange.value=1;
+
+
+                         this.right=L.DomUtil.create('label','to', this._div);
+                         this.right.innerHTML=all_data[n-1].datetime;
+
+
+                         from=this.inputRange;
+                         to=this.rightRange;
+                         leftLabel=this.left;
+                         rightLabel=this.right;
+
+                      L.DomEvent.addListener(this._div, 'click', function(){
+
+                        startDate=new Date(baseDate);
+                        var fromDays=parseInt(from.value);
+                        var toDays=parseInt(to.value);
+                        if(toDays<=fromDays){
+                          toDays=fromDays+1;
+                          to.value=toDays;
+                        }
+                        if(toDays-fromDays>60){
+                          toDays=fromDays+60;
+                          to.value=toDays;
+                        }
+
+
+                        startDate.setDate(startDate.getDate()+fromDays);
+                        endDate=new Date(baseDate);
+                        endDate.setDate(endDate.getDate()+toDays);
+                        leftLabel.innerHTML="from "+startDate.toISOString().slice(0,10);
+                        rightLabel.innerHTML="to "+endDate.toISOString().slice(0,10);
+
+
+                        var statement = "\
+                              SELECT id,\
+                                     datetime,\
+                                     borough,\
+                                     zipcode,\
+                                     ST_AsGeoJSON(position) as position,\
+                                     on_street_name,\
+                                     cross_street_name,\
+                                     off_street_name,\
+                                     number_persons_injured,\
+                                     number_persons_killed,\
+                                     number_pedestrians_injured,\
+                                     number_pedestrians_killed,\
+                                     number_cyclist_injured,\
+                                     number_cyclist_killed,\
+                                     number_motorist_injured,\
+                                     number_motorist_killed,\
+                                     contributing_factor_vehicle_1,\
+                                     contributing_factor_vehicle_2,\
+                                     contributing_factor_vehicle_3,\
+                                     contributing_factor_vehicle_4,\
+                                     contributing_factor_vehicle_5,\
+                                     vehicle_type_code_1,\
+                                     vehicle_type_code_2,\
+                                     vehicle_type_code_3,\
+                                     vehicle_type_code_4,\
+                                     vehicle_type_code_5\
+                                  FROM accidents WHERE datetime >= '" + startDate.toISOString().slice(0, 19).replace('T', ' ')+"'::timestamptz\
+                                                   AND datetime <  '" + endDate.toISOString().slice(0, 19).replace('T', ' ')+"'::timestamptz\
+                                                   AND position is NOT NULL\
+                                 ORDER BY datetime\
+                               "
+
+                        console.log(statement);
+                         fetch_data(statement, main_data_handler);
+
+                      });
+
+
+                       this.label=L.DomUtil.create('label', 'opLabel', this._div);
+                       this.label.innerHTML='          Map on/off';
+                       this.inputA=L.DomUtil.create('input', 'all_input', this.label);
+                       this.inputA.type='checkbox';
+                      this.inputA.value='Map on/off';
+                      this.inputA.checked=true;
+                      this.time=L.DomUtil.create('label', 'timelabel', this._div);
+                      timeLabel=this.time;
+
+                      L.DomEvent.addListener(this.inputA, 'click', function () {
+
+                        if(this.checked){
+                          tile.options.opacity=1;
+                          update();
+                        }
+                        else{
+
+                          tile.options.opacity=0;
+                          update();
+                        }
+
+
+                      });
+
+
+                         return this._div;
+                       },
+                       setContent: function (content) {
+                         this.getContainer().innerHTML=content;
+                       }
+                     });
+
+                     timeSlider=new TimeSlider().addTo(map);
+
+                     var CrashInfo=L.Control.extend({
+                       options: {
+                         position: 'bottomleft'
+                       },
+                       onAdd: function (map) {
+                         return L.DomUtil.create('div', 'crashInfo');
+                       },
+                       setContent: function (content) {
+                         this.getContainer().innerHTML=content;
+                       }
+                     });
+                     crashInfo=new CrashInfo().addTo(map);
+
+                     L.Control.overlay = L.Control.extend({
+                                onAdd: function(map) {
+		                     this._div=L.DomUtil.create('div', 'overlay');
+
+                                for(var i=0; i<domain.length; i++){
+
+                                   this.label=L.DomUtil.create('label', 'label'+i, this._div);
+                                   var param=domain[i];
+                                   var count=  g.selectAll("circle").data().filter(function(d) {return  		d.contributing_factor_vehicle_1==param;}).length;
+                                   this.label.innerHTML="/"+param+"("+count+"):";
+                                   this.label.style.backgroundColor=factorColor(param);
+                                   this.inputA=L.DomUtil.create('input', 'input'+i, this.label);
+                                   this.inputA.type='checkbox';
+                                   this.inputA.value=param;
+                                   this.inputA.checked=true;
+                                   factors.push(this.inputA.value);
+                                   L.DomEvent.addListener(this.inputA, 'click', function () {
+                                     if(this.checked){
+                                       factors.push(this.value)
+
+                                         update("repaint");
+                                     }
+                                     else{
+
+                                       var i = factors.indexOf(this.value);
+                                       if(i != -1) {
+                                          factors.splice(i, 1);
+                                       }
+
+                                         update("repaint");
+                                     }
+
+
+                                   });
+
+
+                                }
+
+                                this.label=L.DomUtil.create('all_label', 'all_label', this._div);
+                                this.label.innerHTML='<br>all causes';
+                                this.label.style.backgroundColor="white";
+                                this.inputA=L.DomUtil.create('input', 'all_input', this.label);
+                                this.inputA.type='checkbox';
+                               this.inputA.value='all causes';
+                               L.DomEvent.addListener(this.inputA, 'click', function () {
+                                  if(this.checked){
+                                    factors=[];
+                                       $('input').each(function() {
+                                          var select=$(this);
+                                          factors.push(select.val());
+
+                                          select.prop("checked", true);
+                                        });
+                                         update("repaint");
+                                       }
+
+                                  else{
+                                    $('input').each(function() {
+                                       var select=$(this);
+                                       select.prop("checked", false);
+                                     });
+                                       factors=["empty"];
+                                       update("repaint");
+                                  }
+                               });
+
+
+                                this.label=L.DomUtil.create('motor_label', 'motor_label', this._div);
+                                this.label.innerHTML='motorist injured/killed ('+motoristInjured+"/"+motoristKilled+")";
+                                this.label.style.backgroundColor="green";
+                                this.inputA=L.DomUtil.create('input', 'motor_input', this.label);
+                                this.inputA.type='checkbox';
+                               this.inputA.value='motorist injured/killed';
+                               L.DomEvent.addListener(this.inputA, 'click', function () {
+                                  if(this.checked){
+                                       motor=1;
+                                       update("repaint");
+                                  }
+                                  else{
+                                       motor=0;
+                                       update("repaint");
+                                  }
+                               });
+                               this.label=L.DomUtil.create('bike_label', 'bike_label', this._div);
+                               this.label.innerHTML='bicycle driver injured/killed ('+bikeInjured+"/"+bikeKilled+")"
+                               this.label.style.backgroundColor="red";
+                               this.inputA=L.DomUtil.create('input', 'bike_input', this.label);
+                               this.inputA.type='checkbox';
+                              this.inputA.value='bicycle driver injured/killed';
+                              L.DomEvent.addListener(this.inputA, 'click', function () {
+                                 if(this.checked){
+                                      bike=1;
+                                      update("repaint");
+                                 }
+                                 else{
+                                      bike=0;
+                                      update("repaint");
+                                 }
+                              });
+                              this.label=L.DomUtil.create('ped_label', 'ped_label', this._div);
+                              this.label.innerHTML='pedestrian injured/killed('+pedInjured+"/"+pedKilled+")"
+                              this.label.style.backgroundColor="blue";
+                              this.inputA=L.DomUtil.create('input', 'ped_input', this.label);
+                              this.inputA.type='checkbox';
+                             this.inputA.value='pedestrian injured/killed';
+                             L.DomEvent.addListener(this.inputA, 'click', function () {
+                                if(this.checked){
+                                     ped=1;
+                                     update("repaint");
+                                }
+                                else{
+                                     ped=0;
+                                     update("repaint");
+                                }
+                             });
+
+                             this.mode=L.DomUtil.create('button', 'mode', this._div);
+                             this.mode.type='button';
+
+                             this.mode.innerHTML="MODE";
+                             L.DomEvent.addListener(this.mode, 'click', function() {
+                               console.log("click");
+                                if(animation==1){
+                                  animation=0;
+                                }
+                                else{
+                                  console.log(geoSons);
+                                 for(var i=0; i<geoSons.length; i++){
+                                    map.removeLayer(geoSons[i]);
+                                  }
+                                  geoSons=[];
+                                  streetList=new Map();
+                                  animation=1;
+
+                                }
+                                main_data_handler(Data);
+                                console.log(animation);
+                             });
+
+                             this.label=L.DomUtil.create('streets_label', 'streets_label', this._div);
+                             this.label.innerHTML="streets"
+
+                             this.inputA=L.DomUtil.create('input', 'street_input', this.label);
+                             this.inputA.type='checkbox';
+                            this.inputA.value=false;
+                            L.DomEvent.addListener(this.inputA, 'click', function () {
+                               if(this.checked){
+                                    streets=1;
+                                    update("repaint");
+                               }
+                               else{
+                                    streets=0;
+                                    update("repaint");
+                               }
+                            });
+
+                            this.label=L.DomUtil.create('streets_label', 'streets_label', this._div);
+                            this.label.innerHTML="clusters"
+
+
+                            this.inputA=L.DomUtil.create('input', 'street_input', this.label);
+                            this.inputA.type='checkbox';
+                           this.inputA.value=false;
+
+                           this.label=L.DomUtil.create('imp','imp', this._div);
+                           this.label.innerHTML="<br> created by Tobias Hildebrandt and Conrad Indiono. Contact: Tobias.Hildebrandt, univie.ac.at <br> Performance depends on selected time range, max. 60 days. <br> Best performance in Chrome."
+
+                           L.DomEvent.addListener(this.inputA, 'click', function () {
+                              if(this.checked){
+                                   clusters=1;
+                                   drawClusters();
+                                   update("repaint");
+                              }
+                              else{
+                                   clusters=0;
+                                   update("repaint");
+                              }
+                           });
+
+
+                                return this._div;
+                                  },
+                     });
+
+
+                     L.control.overlay = function(opts) {
+                         return new L.Control.overlay(opts);
+                     }
+
+                    control=L.control.overlay().addTo(map);
+
+                   }
+
+                   fetch_data(statement, main_data_handler);
+
+
+
+            function info(d){
+              crashInfo.setContent("<b>Factors</b> "+d.vehicle_type_code_1+":"+d.contributing_factor_vehicle_1+","+d.vehicle_type_code_2+" "+d.contributing_factor_vehicle_2+" / <b>Date&Time:</b> "+d.datetime+" / <b>cyclists injured</b> "+d.number_cyclist_injured+" / <b>cyclists killed</b> "+d.number_cyclist_killed+" / <b>motorist injured</b> "+d.number_motorist_injured+" / <b>motorists killed</b> "+d.number_motorist_killed+" / <b>pedestrians injured</b> "+d.number_pedestrians_injured+" / <b>pedestrians killed</b> "+d.number_pedestrians_killed);
+
+            };
+
+            function update(repaint) {
+              console.log("update");
+              motoristInjured=0;
+              motoristKilled=0;
+              bikeInjured=0;
+              bikeKilled=0;
+              pedInjured=0;
+              pedKilled=0;
+              personsInjured=0;
+              personsKilled=0;
+
+              if(repaint=="repaint"){
+                for(var i=0; i<geoSons.length; i++){
+
+                   map.removeLayer(geoSons[i]);
+                 }
+   
+                 streetList=new Map();
+
+                console.log("repaint");
+
+                if(factors!=undefined &&factors.length>0){
+                  console.log(factors);
+                  g.selectAll("circle").remove();
+                  filtered = g.selectAll("circle")
+                      .data(all_data)
+                      .enter().append("circle")
+                      .style("stroke", "black")
+                      .style("stroke-width", 0)
+                      .style("opacity", 0)
+                      .style("fill", "red")
+                      .attr("r", 20)
+        
+                      .filter(function(d){ return factors.includes(d.contributing_factor_vehicle_1) && (d.number_motorist_killed+d.number_motorist_injured)>=motor && (d.number_cyclist_killed+d.number_cyclist_injured)>=bike && (d.number_pedestrians_killed+d.number_pedestrians_injured)>=ped;  })
+                      .attr("pointer-events", "visible")
+                      .on("click", info);
+               }
+
+
+
+               else{
+
+                 g.selectAll("circle").remove();
+                 filtered = g.selectAll("circle")
+                     .data(all_data)
+                     .enter().append("circle")
+                     .style("stroke", "black")
+                     .style("stroke-width", 0)
+                     .style("opacity", 0)
+                     .style("fill", "red")
+                     .attr("r", 20)
+                     .attr("pointer-events", "visible")
+                     .on("click", info);
+
+
+               }
+
+               injuredStreet=d3.scale.linear().domain([1,filtered[0].length/50]).range([0.1,1]);
+
+
+
+             }
+             if(animation==0){
+
+                   filtered.attr("transform",
+               			   function(d) {
+                              if(d.on_street_name!=""&&repaint=="repaint"&&(d.number_persons_killed>0||d.number_persons_injured>0)){
+                                  if(streetList.get(d.on_street_name)==undefined){
+                                      streetList.set(d.on_street_name, (d.number_persons_killed*2)+d.number_persons_injured);
+                                  }
+                                  else{
+                                    streetList.set(d.on_street_name, (streetList.get(d.on_street_name)+(d.number_persons_killed*2)+d.number_persons_injured)    );
+                                  }
+
+                              }
+                              var pos=new L.LatLng(d.position.coordinates[0],d.position.coordinates[1]);
+     
+               				       return "translate("+                     					          map.latLngToLayerPoint(pos).x +","+
+               					          map.latLngToLayerPoint(pos).y +")";
+
+               			});
+                     filtered.style("opacity",
+                       function(d) {
+                         personsKilled+=d.number_persons_killed;
+                         personsInjured+=d.number_persons_injured;
+                         return injuredOpacity((d.number_persons_killed*2)+d.number_persons_injured);
+                     });
+                     filtered.attr("r",
+                       function(d){
+                         return injuredSize((d.number_persons_killed*2)+d.number_persons_injured);
+                     });
+                     filtered.style("fill",
+                        function(d){
+
+                          return factorColor(d.contributing_factor_vehicle_1);
+                     });
+                     filtered.style("stroke",
+                       function(d){
+                         if(d.number_cyclist_killed>0||d.number_cyclist_injured>0){
+                             bikeKilled+=d.number_cyclist_killed;
+                             bikeInjured+=d.number_cyclist_injured;
+                             return "red";
+                         }
+                         if(d.number_pedestrians_killed>0||d.number_pedestrians_injured>0){
+                             pedKilled+=d.number_pedestrians_killed;
+                             pedInjured+=d.number_pedestrians_injured;
+                             return "blue";
+                         }
+                         if(d.number_motorist_killed>0||d.number_motorist_injured>0){
+                             motoristKilled+=d.number_motorist_killed;
+                             motoristInjured+=d.number_motorist_injured;
+                             return "green";
+                         }
+
+                     });
+                     filtered.style("stroke-width",
+                       function(d){
+                         return injuredStrokeWidth((d.number_persons_killed*2)+d.number_persons_injured);
+                       });
+                     filtered.on("click", info);
+
+                      oscillator.frequency.value = injuredPitch((personsKilled*2)+personsInjured); // value in hertz
+                      gainNode.gain.value=numberVol(filtered.size());
+                 }
+                 if(repaint=="repaint"){
+                   if(streets==1){
+                     for (var [key, value] of streetList) {
+                       getStreet(key, injuredStreet(value));
+                          console.log(key + " = " + value);
+                    }
+                   }
+
+                 }
+
+
+            };
+        </script>
+    </body>
+</html>
